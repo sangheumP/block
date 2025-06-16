@@ -26,6 +26,7 @@
         #game {
             border: 2px solid #fff;
             background-color: #87CEEB;
+            cursor: crosshair;
         }
         #debug {
             color: white;
@@ -36,7 +37,7 @@
 </head>
 <body>
     <div id="game-container">
-        <div id="instructions">클릭하여 테트리스 블록 발사!</div>
+        <div id="instructions">마우스 방향으로 테트리스 블록 발사!</div>
         <div id="game"></div>
         <div id="debug">디버그 정보가 여기에 표시됩니다</div>
     </div>
@@ -58,10 +59,15 @@
                 this.canShoot = true;
                 this.blockCount = 0;
                 this.gameOver = false;
+                this.blockSize = 24; // 블록 크기
             }
 
             create() {
                 log("게임 scene 생성 중...");
+                
+                // Matter.js 설정 조정
+                this.matter.world.engine.positionIterations = 6;
+                this.matter.world.engine.velocityIterations = 4;
                 
                 // 배경색 설정
                 this.cameras.main.setBackgroundColor('#87CEEB');
@@ -80,37 +86,47 @@
                 // 물리 바닥들 (구멍 제외)
                 this.matter.add.rectangle(75, 580, 150, 40, { 
                     isStatic: true,
-                    label: 'ground'
+                    label: 'ground',
+                    friction: 0.8,
+                    restitution: 0.2 // 약간의 탄성
                 });
                 this.matter.add.rectangle(400, 580, 300, 40, { 
                     isStatic: true,
-                    label: 'ground'
+                    label: 'ground',
+                    friction: 0.8,
+                    restitution: 0.2
                 });
                 this.matter.add.rectangle(725, 580, 150, 40, { 
                     isStatic: true,
-                    label: 'ground'
+                    label: 'ground',
+                    friction: 0.8,
+                    restitution: 0.2
                 });
 
                 // 좌우 벽 (시각적)
                 const wallGraphics = this.add.graphics();
                 wallGraphics.fillStyle(0x8B4513);
-                wallGraphics.fillRect(0, 0, 40, 600); // 왼쪽 벽
-                wallGraphics.fillRect(760, 0, 40, 600); // 오른쪽 벽
+                wallGraphics.fillRect(0, 0, 40, 600);
+                wallGraphics.fillRect(760, 0, 40, 600);
                 
-                // 물리 벽
+                // 물리 벽 - 높은 탄성으로 당구공처럼 튕기게
                 this.matter.add.rectangle(20, 300, 40, 600, { 
                     isStatic: true,
-                    label: 'leftWall'
+                    label: 'leftWall',
+                    restitution: 0.9, // 높은 탄성
+                    friction: 0.1     // 낮은 마찰
                 });
                 this.matter.add.rectangle(780, 300, 40, 600, { 
                     isStatic: true,
-                    label: 'rightWall'
+                    label: 'rightWall',
+                    restitution: 0.9, // 높은 탄성
+                    friction: 0.1     // 낮은 마찰
                 });
 
                 // 대포 생성
                 this.createCannon();
 
-                // 클릭 이벤트 (포인터 위치 정보 포함)
+                // 클릭 이벤트
                 this.input.on('pointerdown', (pointer) => {
                     this.shootBlock(pointer);
                 }, this);
@@ -145,7 +161,140 @@
                 this.cannon.fillCircle(400, 107, 6);
             }
 
-            shootBlock() {
+            // 테트리스 블록 형태 정의
+            getBlockShapes() {
+                return {
+                    // I 블록 (길쭉한 막대)
+                    I: {
+                        shape: [[0, -1.5], [0, -0.5], [0, 0.5], [0, 1.5]],
+                        vertices: [
+                            { x: -12, y: -48 },
+                            { x: 12, y: -48 },
+                            { x: 12, y: 48 },
+                            { x: -12, y: 48 }
+                        ],
+                        color: 0x00ffff
+                    },
+                    // O 블록 (정사각형)
+                    O: {
+                        shape: [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]],
+                        vertices: [
+                            { x: -24, y: -24 },
+                            { x: 24, y: -24 },
+                            { x: 24, y: 24 },
+                            { x: -24, y: 24 }
+                        ],
+                        color: 0xffff00
+                    },
+                    // T 블록 (T자 모양)
+                    T: {
+                        shape: [[0, -1], [-1, 0], [0, 0], [1, 0]],
+                        vertices: [
+                            { x: -36, y: -12 },
+                            { x: -12, y: -12 },
+                            { x: -12, y: -36 },
+                            { x: 12, y: -36 },
+                            { x: 12, y: -12 },
+                            { x: 36, y: -12 },
+                            { x: 36, y: 12 },
+                            { x: -36, y: 12 }
+                        ],
+                        color: 0xff00ff
+                    },
+                    // S 블록 (지그재그)
+                    S: {
+                        shape: [[-1, 0.5], [0, 0.5], [0, -0.5], [1, -0.5]],
+                        vertices: [
+                            { x: -36, y: 0 },
+                            { x: -12, y: 0 },
+                            { x: -12, y: -24 },
+                            { x: 36, y: -24 },
+                            { x: 36, y: 0 },
+                            { x: 12, y: 0 },
+                            { x: 12, y: 24 },
+                            { x: -36, y: 24 }
+                        ],
+                        color: 0x00ff00
+                    },
+                    // Z 블록 (역 지그재그)
+                    Z: {
+                        shape: [[-1, -0.5], [0, -0.5], [0, 0.5], [1, 0.5]],
+                        vertices: [
+                            { x: -36, y: -24 },
+                            { x: 12, y: -24 },
+                            { x: 12, y: 0 },
+                            { x: 36, y: 0 },
+                            { x: 36, y: 24 },
+                            { x: -12, y: 24 },
+                            { x: -12, y: 0 },
+                            { x: -36, y: 0 }
+                        ],
+                        color: 0xff0000
+                    },
+                    // J 블록 (L자 모양)
+                    J: {
+                        shape: [[0, -1], [0, 0], [0, 1], [-1, 1]],
+                        vertices: [
+                            { x: -12, y: -36 },
+                            { x: 12, y: -36 },
+                            { x: 12, y: 36 },
+                            { x: -36, y: 36 },
+                            { x: -36, y: 12 },
+                            { x: -12, y: 12 }
+                        ],
+                        color: 0x0000ff
+                    },
+                    // L 블록 (역 L자 모양)
+                    L: {
+                        shape: [[0, -1], [0, 0], [0, 1], [1, 1]],
+                        vertices: [
+                            { x: -12, y: -36 },
+                            { x: 12, y: -36 },
+                            { x: 12, y: 12 },
+                            { x: 36, y: 12 },
+                            { x: 36, y: 36 },
+                            { x: -12, y: 36 }
+                        ],
+                        color: 0xff8000
+                    }
+                };
+            }
+
+            createTetrisBlock(startX, startY, blockType) {
+                const shapes = this.getBlockShapes();
+                const shape = shapes[blockType];
+                
+                // 시각적 블록들을 담을 컨테이너
+                const visualBlocks = [];
+                
+                // 각 작은 블록 생성 (시각적 표현용)
+                shape.shape.forEach((pos) => {
+                    const x = startX + pos[0] * this.blockSize;
+                    const y = startY + pos[1] * this.blockSize;
+                    
+                    // 시각적 블록
+                    const visualBlock = this.add.rectangle(x, y, this.blockSize - 1, this.blockSize - 1, shape.color);
+                    visualBlock.setStrokeStyle(1, 0x000000);
+                    visualBlocks.push(visualBlock);
+                });
+                
+                // 단일 물리 객체로 생성
+                const physicsBlock = this.matter.bodies.fromVertices(startX, startY, shape.vertices, {
+                    restitution: 0.6,      // 벽에 튕기는 탄성
+                    friction: 0.3,         // 적당한 마찰
+                    frictionStatic: 0.6,   // 정지 마찰
+                    frictionAir: 0.01,     // 공기 저항
+                    density: 0.001,        // 밀도
+                    label: 'tetrisBlock'
+                });
+                
+                // Matter world에 추가
+                this.matter.world.add(physicsBlock);
+                
+                return { physicsBlock, visualBlocks, shape: shape.shape };
+            }
+
+            shootBlock(pointer) {
                 if (!this.canShoot || this.gameOver) {
                     if (this.gameOver) {
                         log("게임 오버! 새로고침하여 다시 시작하세요.");
@@ -156,64 +305,49 @@
                 }
                 
                 this.blockCount++;
-                log(`블록 ${this.blockCount}번 발사!`);
-
-                // 블록 색상들
-                const colors = [
-                    0xff0000, // 빨강
-                    0x00ff00, // 초록
-                    0x0000ff, // 파랑
-                    0xffff00, // 노랑
-                    0xff00ff, // 마젠타
-                    0x00ffff, // 시안
-                    0xff8000, // 주황
-                    0x8000ff  // 보라
-                ];
                 
-                const randomColor = colors[Math.floor(Math.random() * colors.length)];
+                // 랜덤 블록 타입 선택
+                const blockTypes = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
+                const randomType = blockTypes[Math.floor(Math.random() * blockTypes.length)];
+                
+                log(`${randomType} 블록 ${this.blockCount}번 발사!`);
                 
                 // 블록 생성 위치 (대포 포신 끝)
                 const startX = 400;
-                const startY = 125; // 대포 포신 끝 위치
+                const startY = 125;
                 
-                // 시각적 블록 생성 (Phaser 스프라이트)
-                const visualBlock = this.add.rectangle(startX, startY, 30, 30, randomColor);
-                visualBlock.setStrokeStyle(2, 0x000000); // 검은색 테두리
+                // 테트리스 블록 생성
+                const block = this.createTetrisBlock(startX, startY, randomType);
                 
-                // 물리 블록 생성 (투명하게)
-                const physicsBlock = this.matter.add.rectangle(startX, startY, 30, 30, {
-                    restitution: 0.4,
-                    friction: 0.7,
-                    frictionAir: 0.01,
-                    label: 'block',
-                    render: { visible: false } // 물리 블록은 안 보이게
-                });
+                // 마우스 방향으로 발사 각도 계산
+                const angle = Math.atan2(pointer.y - startY, pointer.x - startX);
+                const speed = 6; // 발사 속도
                 
-                // 시각적 블록과 물리 블록 연결
-                const blockPair = { visual: visualBlock, physics: physicsBlock };
+                const velocityX = Math.cos(angle) * speed;
+                const velocityY = Math.sin(angle) * speed;
                 
-                // 발사 속도 (아래쪽으로)
-                const velocityX = (Math.random() - 0.5) * 4; // 좌우 랜덤
-                const velocityY = 2; // 아래쪽으로 천천히
-                
-                this.matter.body.setVelocity(physicsBlock, { x: velocityX, y: velocityY });
+                this.matter.body.setVelocity(block.physicsBlock, { x: velocityX, y: velocityY });
                 
                 // 블록 회전
-                this.matter.body.setAngularVelocity(physicsBlock, (Math.random() - 0.5) * 0.2);
+                this.matter.body.setAngularVelocity(block.physicsBlock, (Math.random() - 0.5) * 0.1);
+                
+                this.blocks.push(block);
 
-                this.blocks.push(blockPair);
-
-                // 대포 발사 효과
+                // 대포 발사 효과 (마우스 방향으로 회전)
+                const cannonAngle = angle + Math.PI / 2; // 90도 조정
+                this.cannon.setRotation(cannonAngle * 0.1); // 살짝만 회전
+                
                 this.tweens.add({
                     targets: this.cannon,
                     scaleY: 0.95,
                     scaleX: 1.05,
+                    rotation: 0,
                     duration: 100,
                     yoyo: true,
                     ease: 'Power2'
                 });
 
-                // 발사 사운드 효과 (시각적) - 대포 포신에서
+                // 발사 사운드 효과 (시각적)
                 const flash = this.add.circle(400, 107, 20, 0xffff00, 0.8);
                 this.tweens.add({
                     targets: flash,
@@ -225,7 +359,7 @@
 
                 // 쿨타임 설정
                 this.canShoot = false;
-                this.time.delayedCall(400, () => {
+                this.time.delayedCall(500, () => {
                     this.canShoot = true;
                     log(`다음 블록 준비 완료! (총 ${this.blockCount}개 발사됨)`);
                 });
@@ -233,20 +367,45 @@
 
             update() {
                 // 시각적 블록과 물리 블록 위치 동기화
-                this.blocks.forEach(blockPair => {
-                    if (blockPair.physics && blockPair.visual) {
-                        // 테트리스 블록 그룹의 위치 업데이트
-                        const centerX = blockPair.physics.position.x;
-                        const centerY = blockPair.physics.position.y;
-                        const angle = blockPair.physics.angle;
+                this.blocks.forEach(block => {
+                    if (block.physicsBlock && block.visualBlocks) {
+                        const centerX = block.physicsBlock.position.x;
+                        const centerY = block.physicsBlock.position.y;
+                        const angle = block.physicsBlock.angle;
                         
-                        blockPair.visual.setPosition(centerX, centerY);
-                        blockPair.visual.setRotation(angle);
+                        // 속도가 충분히 느려지면 정지
+                        const velocity = block.physicsBlock.velocity;
+                        const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+                        const angularSpeed = Math.abs(block.physicsBlock.angularVelocity);
                         
-                        // 게임오버 구역 체크 (왼쪽 구멍: x 150-250, 오른쪽 구멍: x 550-650)
-                        const pos = blockPair.physics.position;
-                        if (pos.y > 570) { // 바닥 근처에 도달했을 때
-                            if ((pos.x > 150 && pos.x < 250) || (pos.x > 550 && pos.x < 650)) {
+                        // 바닥에 있고 속도가 느리면 정지
+                        if (centerY > 520 && speed < 0.5 && angularSpeed < 0.01) {
+                            this.matter.body.setVelocity(block.physicsBlock, { x: 0, y: 0 });
+                            this.matter.body.setAngularVelocity(block.physicsBlock, 0);
+                            // 정지 상태로 설정
+                            this.matter.body.setStatic(block.physicsBlock, true);
+                        }
+                        
+                        // 각 시각적 블록 업데이트
+                        block.visualBlocks.forEach((visualBlock, index) => {
+                            const relPos = block.shape[index];
+                            
+                            // 회전 변환
+                            const cos = Math.cos(angle);
+                            const sin = Math.sin(angle);
+                            const rotX = relPos[0] * cos - relPos[1] * sin;
+                            const rotY = relPos[0] * sin + relPos[1] * cos;
+                            
+                            visualBlock.setPosition(
+                                centerX + rotX * this.blockSize,
+                                centerY + rotY * this.blockSize
+                            );
+                            visualBlock.setRotation(angle);
+                        });
+                        
+                        // 게임오버 구역 체크
+                        if (centerY > 540) {
+                            if ((centerX > 150 && centerX < 250) || (centerX > 550 && centerX < 650)) {
                                 this.triggerGameOver();
                                 return;
                             }
@@ -255,13 +414,13 @@
                 });
                 
                 // 화면 밖으로 나간 블록들 정리
-                this.blocks = this.blocks.filter(blockPair => {
-                    const pos = blockPair.physics.position;
+                this.blocks = this.blocks.filter(block => {
+                    const pos = block.physicsBlock.position;
                     if (pos.y > 650 || pos.x < -50 || pos.x > 850) {
                         // 물리 블록 제거
-                        this.matter.world.remove(blockPair.physics);
-                        // 시각적 블록 제거
-                        blockPair.visual.destroy();
+                        this.matter.world.remove(block.physicsBlock);
+                        // 시각적 블록들 제거
+                        block.visualBlocks.forEach(vb => vb.destroy());
                         return false;
                     }
                     return true;
@@ -304,9 +463,9 @@
             physics: {
                 default: 'matter',
                 matter: {
-                    gravity: { y: 0.8 },
-                    debug: false, // true로 바꾸면 물리 바디가 보임
-                    enableSleeping: false
+                    gravity: { y: 0.6 },
+                    debug: false,
+                    enableSleeping: true
                 }
             },
             scene: GameScene
