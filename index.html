@@ -37,7 +37,7 @@
 </head>
 <body>
     <div id="game-container">
-        <div id="instructions">마우스 방향으로 테트리스 블록 발사!</div>
+        <div id="instructions">빨간 선 아래로만 조준 가능! 마우스로 테트리스 블록 발사!</div>
         <div id="game"></div>
         <div id="debug">디버그 정보가 여기에 표시됩니다</div>
     </div>
@@ -55,11 +55,14 @@
             constructor() {
                 super({ key: 'GameScene' });
                 this.cannon = null;
+                this.aimLine = null;
+                this.cannonCenter = { x: 400, y: 80 }; // 대포 중심점 고정
                 this.blocks = [];
                 this.canShoot = true;
                 this.blockCount = 0;
                 this.gameOver = false;
                 this.blockSize = 24; // 블록 크기
+                this.cannonAngle = Math.PI / 2; // 초기 각도 (아래 방향)
             }
 
             create() {
@@ -83,24 +86,24 @@
                 // 오른쪽 바닥
                 groundGraphics.fillRect(650, 560, 150, 40);
                 
-                // 물리 바닥들 (구멍 제외)
+                // 물리 바닥들 (구멍 제외) - 현실적인 탄성
                 this.matter.add.rectangle(75, 580, 150, 40, { 
                     isStatic: true,
                     label: 'ground',
-                    friction: 0.8,
-                    restitution: 0.2 // 약간의 탄성
+                    friction: 0.6,
+                    restitution: 0.3 // 현실적인 탄성
                 });
                 this.matter.add.rectangle(400, 580, 300, 40, { 
                     isStatic: true,
                     label: 'ground',
-                    friction: 0.8,
-                    restitution: 0.2
+                    friction: 0.6,
+                    restitution: 0.3
                 });
                 this.matter.add.rectangle(725, 580, 150, 40, { 
                     isStatic: true,
                     label: 'ground',
-                    friction: 0.8,
-                    restitution: 0.2
+                    friction: 0.6,
+                    restitution: 0.3
                 });
 
                 // 좌우 벽 (시각적)
@@ -109,19 +112,30 @@
                 wallGraphics.fillRect(0, 0, 40, 600);
                 wallGraphics.fillRect(760, 0, 40, 600);
                 
-                // 물리 벽 - 높은 탄성으로 당구공처럼 튕기게
+                // 물리 벽 - 현실적인 탄성
                 this.matter.add.rectangle(20, 300, 40, 600, { 
                     isStatic: true,
                     label: 'leftWall',
-                    restitution: 0.9, // 높은 탄성
-                    friction: 0.1     // 낮은 마찰
+                    restitution: 0.7, // 현실적인 벽 탄성
+                    friction: 0.3
                 });
                 this.matter.add.rectangle(780, 300, 40, 600, { 
                     isStatic: true,
                     label: 'rightWall',
-                    restitution: 0.9, // 높은 탄성
-                    friction: 0.1     // 낮은 마찰
+                    restitution: 0.7, // 현실적인 벽 탄성
+                    friction: 0.3
                 });
+
+                // 위쪽 천장 추가
+                this.matter.add.rectangle(400, 20, 800, 40, { 
+                    isStatic: true,
+                    label: 'ceiling',
+                    restitution: 0.5,
+                    friction: 0.4
+                });
+
+                // 조준 제한선 그리기 (빨간 선)
+                this.createAimLine();
 
                 // 대포 생성
                 this.createCannon();
@@ -131,34 +145,128 @@
                     this.shootBlock(pointer);
                 }, this);
                 
-                log("게임 초기화 완료! 클릭해보세요.");
+                // 마우스 움직임 이벤트 (대포 회전용)
+                this.input.on('pointermove', (pointer) => {
+                    this.rotateCannon(pointer);
+                }, this);
+                
+                log("게임 초기화 완료! 빨간 선 아래로만 조준 가능!");
+            }
+
+            createAimLine() {
+                // 빨간 조준 제한선 그리기
+                this.aimLine = this.add.graphics();
+                this.aimLine.lineStyle(3, 0xff0000, 1);
+                this.aimLine.moveTo(50, this.cannonCenter.y + 60);
+                this.aimLine.lineTo(750, this.cannonCenter.y + 60);
+                
+                // 제한 구역 표시 (반투명 빨간색)
+                this.aimLine.fillStyle(0xff0000, 0.1);
+                this.aimLine.fillRect(50, this.cannonCenter.y + 60, 700, 500);
             }
 
             createCannon() {
-                // 뿌요뿌요 스타일 위쪽 대포 그래픽 생성
+                // 현실적인 대포 그래픽 생성
                 this.cannon = this.add.graphics();
+                this.drawCannon();
+            }
+
+            drawCannon() {
+                this.cannon.clear();
                 
-                // 대포 받침대 (넓은 베이스) - 맨 위쪽
+                // 대포 받침대 (튼튼한 플랫폼)
+                this.cannon.fillStyle(0x2C2C2C);
+                this.cannon.fillRoundedRect(-50, -15, 100, 30, 5);
+                
+                // 대포 바퀴 (양쪽)
+                this.cannon.fillStyle(0x1A1A1A);
+                this.cannon.fillCircle(-35, 0, 18);
+                this.cannon.fillCircle(35, 0, 18);
+                
+                // 바퀴 테두리
+                this.cannon.lineStyle(2, 0x333333);
+                this.cannon.strokeCircle(-35, 0, 18);
+                this.cannon.strokeCircle(35, 0, 18);
+                
+                // 바퀴 살
+                this.cannon.lineStyle(1, 0x444444);
+                for(let i = 0; i < 8; i++) {
+                    const angle = (i * Math.PI) / 4;
+                    const x1 = -35 + Math.cos(angle) * 8;
+                    const y1 = Math.sin(angle) * 8;
+                    const x2 = -35 + Math.cos(angle) * 16;
+                    const y2 = Math.sin(angle) * 16;
+                    this.cannon.moveTo(x1, y1);
+                    this.cannon.lineTo(x2, y2);
+                    
+                    const x3 = 35 + Math.cos(angle) * 8;
+                    const y3 = Math.sin(angle) * 8;
+                    const x4 = 35 + Math.cos(angle) * 16;
+                    const y4 = Math.sin(angle) * 16;
+                    this.cannon.moveTo(x3, y3);
+                    this.cannon.lineTo(x4, y4);
+                }
+                
+                // 대포 축 (회전 중심)
                 this.cannon.fillStyle(0x444444);
-                this.cannon.fillRoundedRect(360, 20, 80, 40, 8);
+                this.cannon.fillCircle(0, -5, 12);
                 
-                // 대포 본체 (짧고 통통한 원통)
+                // 대포 본체 (원통형)
                 this.cannon.fillStyle(0x333333);
-                this.cannon.fillRoundedRect(375, 50, 50, 50, 10);
+                this.cannon.fillEllipse(0, -5, 70, 35);
                 
-                // 대포 포신 (아래쪽을 향한 짧은 총구)
-                this.cannon.fillStyle(0x222222);
-                this.cannon.fillRoundedRect(390, 95, 20, 25, 5);
+                // 대포 포신 (길고 현실적인)
+                this.cannon.fillStyle(0x2A2A2A);
+                this.cannon.fillRoundedRect(-8, -40, 16, 35, 3);
                 
-                // 대포 장식 고리들
-                this.cannon.lineStyle(3, 0x666666);
-                this.cannon.strokeRect(375, 55, 50, 8);
-                this.cannon.strokeRect(375, 70, 50, 8);
-                this.cannon.strokeRect(375, 85, 50, 8);
+                // 포신 끝부분
+                this.cannon.fillStyle(0x1A1A1A);
+                this.cannon.fillRoundedRect(-6, -42, 12, 5, 2);
                 
-                // 발사구 하이라이트
-                this.cannon.fillStyle(0x555555);
-                this.cannon.fillCircle(400, 107, 6);
+                // 대포 장식 밴드
+                this.cannon.lineStyle(2, 0x555555);
+                this.cannon.strokeEllipse(0, -5, 70, 35);
+                this.cannon.strokeRect(-8, -25, 16, 3);
+                this.cannon.strokeRect(-8, -15, 16, 3);
+                
+                // 조준경
+                this.cannon.fillStyle(0x666666);
+                this.cannon.fillRect(-2, -30, 4, 8);
+                this.cannon.fillRect(-4, -28, 8, 4);
+                
+                // 대포 위치 설정
+                this.cannon.setPosition(this.cannonCenter.x, this.cannonCenter.y);
+            }
+
+            rotateCannon(pointer) {
+                if (this.gameOver) return;
+                
+                // 마우스가 빨간 선 아래에 있는지 확인
+                if (pointer.y <= this.cannonCenter.y + 60) {
+                    return; // 빨간 선 위쪽이면 회전하지 않음
+                }
+                
+                // 마우스 방향으로 대포 회전 (빨간 선 아래로만)
+                const angle = Math.atan2(
+                    pointer.y - this.cannonCenter.y, 
+                    pointer.x - this.cannonCenter.x
+                );
+                
+                // 각도 제한 (아래쪽 반원만)
+                const minAngle = 0; // 오른쪽 수평
+                const maxAngle = Math.PI; // 왼쪽 수평
+                
+                let limitedAngle = angle;
+                if (angle < 0) {
+                    if (angle > -Math.PI/2) {
+                        limitedAngle = minAngle;
+                    } else {
+                        limitedAngle = maxAngle;
+                    }
+                }
+                
+                this.cannonAngle = limitedAngle;
+                this.cannon.setRotation(limitedAngle);
             }
 
             // 테트리스 블록 형태 정의
@@ -278,13 +386,13 @@
                     visualBlocks.push(visualBlock);
                 });
                 
-                // 단일 물리 객체로 생성
+                // 단일 물리 객체로 생성 - 현실적인 물리 속성
                 const physicsBlock = this.matter.bodies.fromVertices(startX, startY, shape.vertices, {
-                    restitution: 0.6,      // 벽에 튕기는 탄성
-                    friction: 0.3,         // 적당한 마찰
-                    frictionStatic: 0.6,   // 정지 마찰
-                    frictionAir: 0.01,     // 공기 저항
-                    density: 0.001,        // 밀도
+                    restitution: 0.6,      // 현실적인 탄성 (적당히 튕김)
+                    friction: 0.4,         // 적절한 마찰
+                    frictionStatic: 0.5,   // 정지 마찰
+                    frictionAir: 0.01,     // 약간의 공기 저항
+                    density: 0.001,        // 적절한 밀도
                     label: 'tetrisBlock'
                 });
                 
@@ -304,6 +412,12 @@
                     return;
                 }
                 
+                // 빨간 선 위로는 발사 불가
+                if (pointer.y <= this.cannonCenter.y + 60) {
+                    log("빨간 선 아래로만 발사할 수 있습니다!");
+                    return;
+                }
+                
                 this.blockCount++;
                 
                 // 랜덤 블록 타입 선택
@@ -312,16 +426,17 @@
                 
                 log(`${randomType} 블록 ${this.blockCount}번 발사!`);
                 
-                // 블록 생성 위치 (대포 포신 끝)
-                const startX = 400;
-                const startY = 125;
+                // 대포 포신 끝에서 발사
+                const cannonLength = 40;
+                const startX = this.cannonCenter.x + Math.cos(this.cannonAngle) * cannonLength;
+                const startY = this.cannonCenter.y + Math.sin(this.cannonAngle) * cannonLength;
                 
                 // 테트리스 블록 생성
                 const block = this.createTetrisBlock(startX, startY, randomType);
                 
                 // 마우스 방향으로 발사 각도 계산
                 const angle = Math.atan2(pointer.y - startY, pointer.x - startX);
-                const speed = 6; // 발사 속도
+                const speed = 18; // 더 빠른 발사 속도
                 
                 const velocityX = Math.cos(angle) * speed;
                 const velocityY = Math.sin(angle) * speed;
@@ -329,37 +444,44 @@
                 this.matter.body.setVelocity(block.physicsBlock, { x: velocityX, y: velocityY });
                 
                 // 블록 회전
-                this.matter.body.setAngularVelocity(block.physicsBlock, (Math.random() - 0.5) * 0.1);
+                this.matter.body.setAngularVelocity(block.physicsBlock, (Math.random() - 0.5) * 0.2);
                 
                 this.blocks.push(block);
 
-                // 대포 발사 효과 (마우스 방향으로 회전)
-                const cannonAngle = angle + Math.PI / 2; // 90도 조정
-                this.cannon.setRotation(cannonAngle * 0.1); // 살짝만 회전
-                
+                // 대포 발사 효과 (반동 효과)
                 this.tweens.add({
                     targets: this.cannon,
-                    scaleY: 0.95,
-                    scaleX: 1.05,
-                    rotation: 0,
+                    scaleY: 0.85,
+                    scaleX: 1.15,
                     duration: 100,
                     yoyo: true,
-                    ease: 'Power2'
+                    ease: 'Power3'
                 });
 
-                // 발사 사운드 효과 (시각적)
-                const flash = this.add.circle(400, 107, 20, 0xffff00, 0.8);
+                // 발사 연기 효과
+                const smoke = this.add.circle(startX, startY, 30, 0x888888, 0.6);
+                this.tweens.add({
+                    targets: smoke,
+                    alpha: 0,
+                    scale: 2,
+                    y: startY - 50,
+                    duration: 300,
+                    onComplete: () => smoke.destroy()
+                });
+
+                // 발사 플래시 효과
+                const flash = this.add.circle(startX, startY, 20, 0xffff00, 0.9);
                 this.tweens.add({
                     targets: flash,
                     alpha: 0,
-                    scale: 2,
-                    duration: 200,
+                    scale: 2.5,
+                    duration: 120,
                     onComplete: () => flash.destroy()
                 });
 
                 // 쿨타임 설정
                 this.canShoot = false;
-                this.time.delayedCall(500, () => {
+                this.time.delayedCall(250, () => {
                     this.canShoot = true;
                     log(`다음 블록 준비 완료! (총 ${this.blockCount}개 발사됨)`);
                 });
@@ -378,8 +500,8 @@
                         const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
                         const angularSpeed = Math.abs(block.physicsBlock.angularVelocity);
                         
-                        // 바닥에 있고 속도가 느리면 정지
-                        if (centerY > 520 && speed < 0.5 && angularSpeed < 0.01) {
+                        // 바닥에 있고 속도가 매우 느리면 정지
+                        if (centerY > 520 && speed < 0.3 && angularSpeed < 0.01) {
                             this.matter.body.setVelocity(block.physicsBlock, { x: 0, y: 0 });
                             this.matter.body.setAngularVelocity(block.physicsBlock, 0);
                             // 정지 상태로 설정
@@ -416,7 +538,7 @@
                 // 화면 밖으로 나간 블록들 정리
                 this.blocks = this.blocks.filter(block => {
                     const pos = block.physicsBlock.position;
-                    if (pos.y > 650 || pos.x < -50 || pos.x > 850) {
+                    if (pos.y > 700 || pos.x < -100 || pos.x > 900) {
                         // 물리 블록 제거
                         this.matter.world.remove(block.physicsBlock);
                         // 시각적 블록들 제거
@@ -463,7 +585,7 @@
             physics: {
                 default: 'matter',
                 matter: {
-                    gravity: { y: 0.6 },
+                    gravity: { y: 0.6 }, // 현실적인 중력
                     debug: false,
                     enableSleeping: true
                 }
